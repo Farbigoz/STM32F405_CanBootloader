@@ -1,0 +1,2 @@
+class ChaiLibNotFound(Exception):
+    pass
