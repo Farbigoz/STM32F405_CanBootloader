@@ -166,7 +166,7 @@ MEMORY
 
 [Опционально]
 - В CMakeLists.txt определить выбор скрипта компоновки в зависимости от параметров среды (Чтобы создать несколько профилей сборки проекта)
-```cmake
+```
 # При наличии параметра среды "BOOTLOADER" выбирается скрипт компоновки для загрузки через бутлоадер
 if (DEFINED ENV{BOOTLOADER})
     set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32F405RGTX_BOOTLOADER.ld)
