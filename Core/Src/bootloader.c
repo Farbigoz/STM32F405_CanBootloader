@@ -25,9 +25,10 @@ void FlashMemoryLock() {
 void FlashMemoryErase() {
 	FlashMemoryUnlock();
 
-	// Начинаем очистку памяти с 1 сектора, т.к. в 0 секторе записан бутлоадер
+	// Очистка памяти с 1 сектора, т.к. в 0 секторе записан бутлоадер
+	// Очистка до 10 сектора (10 включительно), т.к. 11 сектор зарезервирован для перезаписываемых значений
 
-	for (int i = FLASH_SECTOR_1; i < FLASH_SECTOR_11; i++) {
+	for (int i = FLASH_SECTOR_1; i <= FLASH_SECTOR_10; i++) {
 		//__disable_irq();
 
 		do {
