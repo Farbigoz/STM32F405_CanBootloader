@@ -47,9 +47,9 @@ MEMORY
 {
   CCMRAM          (xrw) : ORIGIN = 0x10000000, LENGTH = 64K
   RAM             (xrw) : ORIGIN = 0x20000000, LENGTH = 128K
-  FLASH           (rx)  : ORIGIN = 0x8000000,  LENGTH = 16352
-  FLASH_CONSTS    (rx)  : ORIGIN = 0x8003FE0,  LENGTH = 28
-  FLASH_CHECK_SUM (rx)  : ORIGIN = 0x8003FFC,  LENGTH = 4
+  BOOTLOADER      (rx)  : ORIGIN = 0x8000000,  LENGTH = 16K    /* Бутлодер. При запуске переносится в RAM и оттуда работает. */
+  FIRMWARE_INFO   (rx)  : ORIGIN = 0x8004000,  LENGTH = 16K    /* Информация о прошивке. Содержит в себе размер, КС, флаги. Кратно 0x200. */
+  /*FIRMWARE        (rx)  : ORIGIN = 0x8004400,  LENGTH = 992K */
 }
 
 /* Sections */
@@ -61,7 +61,7 @@ SECTIONS
     . = ALIGN(4);
     KEEP(*(.isr_vector)) /* Startup code */
     . = ALIGN(4);
-  } >FLASH
+  } > BOOTLOADER
 
   /* The program code and other data into "FLASH" Rom type memory */
   .text :
@@ -78,16 +78,15 @@ SECTIONS
 
     . = ALIGN(4);
     _etext = .;        /* define a global symbols at end of code */
-  } >FLASH
+  } > BOOTLOADER
 
   /* Constant data into "FLASH" Rom type memory */
-
 
   .ARM.extab   : {
     . = ALIGN(4);
     *(.ARM.extab* .gnu.linkonce.armextab.*)
     . = ALIGN(4);
-  } >FLASH
+  } >BOOTLOADER
 
   .ARM : {
     . = ALIGN(4);
@@ -95,7 +94,7 @@ SECTIONS
     *(.ARM.exidx*)
     __exidx_end = .;
     . = ALIGN(4);
-  } >FLASH
+  } >BOOTLOADER
 
   .preinit_array     :
   {
@@ -104,7 +103,7 @@ SECTIONS
     KEEP (*(.preinit_array*))
     PROVIDE_HIDDEN (__preinit_array_end = .);
     . = ALIGN(4);
-  } >FLASH
+  } >BOOTLOADER
 
   .init_array :
   {
@@ -114,7 +113,7 @@ SECTIONS
     KEEP (*(.init_array*))
     PROVIDE_HIDDEN (__init_array_end = .);
     . = ALIGN(4);
-  } >FLASH
+  } >BOOTLOADER
 
   .fini_array :
   {
@@ -124,51 +123,25 @@ SECTIONS
     KEEP (*(.fini_array*))
     PROVIDE_HIDDEN (__fini_array_end = .);
     . = ALIGN(4);
-  } >FLASH
-
-  /* Сектор для констант: Тип устройства, ... */
-  .flash_consts :
-  {
-    . = ALIGN(4);
-
-    *(.flash_consts);
-
-    . = ALIGN(4);
-  } > FLASH_CONSTS
-
-  /* Сектор для контрольной суммы */
-  .flash_check_sum :
-  {
-    . = ALIGN(4);
-
-    *(.flash_check_sum);
-
-    . = ALIGN(4);
-  } > FLASH_CHECK_SUM
+  } >BOOTLOADER
 
   /* Used by the startup to initialize data */
-  _sidata = LOADADDR(.start_ram_at_flash);
+  _sidata = LOADADDR(.isr_vector_ram);
 
-  /* Начало оперативной памяти, подгружаемой из флэш памяти */
-  .start_ram_at_flash :
-  {
-      . = ALIGN(4);
-
-      _sdata = .;        /* create a global symbol at data start */
-
-      . = ALIGN(4);
-  } >RAM AT> FLASH
-
-  /* Прерывания */
+  /* Вектор прерываний в оперативной памяти */
   .isr_vector_ram :
   {
     . = ALIGN(4);
+    _sdata = .;        /* create a global symbol at data start */
     _isr_vector_ram_addr = .;
-    KEEP(*(.isr_vector_ram)) /* Startup code */
-    . = ALIGN(4);
-  } >RAM AT> FLASH
 
-  /* Основная программа */
+    KEEP(*(.isr_vector_ram))        /* Startup code */
+
+    . = ALIGN(4);
+
+  } >RAM AT> BOOTLOADER
+
+  /* Программа в оперативной памяти */
   .text_ram :
   {
     . = ALIGN(4);
@@ -177,7 +150,7 @@ SECTIONS
     *(.text*)          /* .text* sections (code) */
 
     . = ALIGN(4);
-  } >RAM AT> FLASH
+  } >RAM AT> BOOTLOADER
 
   /* Константы, строки */
   .rodata_ram :
@@ -188,7 +161,7 @@ SECTIONS
       *(.rodata*)        /* .rodata* sections (constants, strings, etc.) */
 
       . = ALIGN(4);
-    } >RAM AT> FLASH
+    } >RAM AT> BOOTLOADER
 
   /* Переменные */
   .data :
@@ -197,21 +170,11 @@ SECTIONS
 
     *(.data)           /* .data sections */
     *(.data*)          /* .data* sections */
-    *(.RamFunc)        /* .RamFunc sections */
-    *(.RamFunc*)       /* .RamFunc* sections */
 
     . = ALIGN(4);
-  } >RAM AT> FLASH
+    _edata = .;        /* define a global symbol at data end */
 
-  /* Конец сектора оперативной памяти, подгружаемой из флэш памяти */
-  .end_ram_at_flash :
-   {
-      . = ALIGN(4);
-
-      _edata = .;        /* define a global symbol at data end */
-
-      . = ALIGN(4);
-  } >RAM AT> FLASH
+  } >RAM AT> BOOTLOADER
 
   _siccmram = LOADADDR(.ccmram);
 
@@ -230,7 +193,30 @@ SECTIONS
 
     . = ALIGN(4);
     _eccmram = .;       /* create a global symbol at ccmram end */
-  } >CCMRAM AT> FLASH
+  } >CCMRAM AT> BOOTLOADER
+
+
+
+  .btl :
+  {
+    . = ALIGN(4);
+
+    KEEP(*(.btl_cfg))
+    KEEP(*(.btl_checksum))
+
+    . = ALIGN(4);
+  } >BOOTLOADER
+
+
+  .fw_info :
+  {
+    . = ALIGN(4);
+
+    KEEP(*(.fw_info))
+
+    . = ALIGN(4);
+  } >FIRMWARE_INFO
+
 
   /* Uninitialized data section into "RAM" Ram type memory */
   . = ALIGN(4);

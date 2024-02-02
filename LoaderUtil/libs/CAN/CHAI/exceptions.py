@@ -1,2 +1,0 @@
-class ChaiLibNotFound(Exception):
-    pass

@@ -59,6 +59,9 @@ void SystemClock_Config(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define CpuRole_Pin GPIO_PIN_2
+#define CpuRole_GPIO_Port GPIOD
+
 #define SafeCell_FbControl_Pin GPIO_PIN_0
 #define SafeCell_FbControl_GPIO_Port GPIOC
 #define DebugLed_Pin GPIO_PIN_1

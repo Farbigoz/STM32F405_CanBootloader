@@ -1,17 +1,6 @@
-# Параметры среды:
-#   EXEC_IN_RAM - Выполнение кода бутлоадера в оперативной памяти (Учитывается только наличие, не значение)
-#                  При выполнении из флеша и при взаимодействии с флешем внутри программы - программа блокируется и не обрабатывает прерывания
-#
-#   DEVICE_TYPE - Тип устройства.
-#                  На основании этого параметра выставляется тип устройства (байт) в бинарнике
-#                  Доступные типы устройств:
-#                    * KRC       (байт = 0x81)
-#                  По-умолчанию тип устройства - отладочное (байт = 0xdb)
-
-
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.16)
 
 # specify cross-compilers and tools
 set(CMAKE_C_COMPILER arm-none-eabi-gcc)
@@ -65,28 +54,24 @@ add_definitions(-DDEBUG -DUSE_HAL_DRIVER -DSTM32F405xx)
 
 file(GLOB_RECURSE SOURCES "Core/*.*" "Drivers/STM32F4xx_HAL_Driver/Src/*.*")
 
-# Загрузка бутлоедера в ОЗУ и работа оттуда (При изменении ПЗУ - ОЗУ не блокируется)
+# Выполнение бутлодера в ОЗУ
+# (При стирании секторов флеша - выполнение из флеша блокируется, а из ОЗУ не блокируется)
 if (DEFINED ENV{EXEC_IN_RAM})
-    set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32F405RGTX_RAM_AT_FLASH.ld)
+    set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32F405RGTX_RAM.ld)
     add_definitions(-DEXEC_IN_RAM)
     message("-- Selected 'Exec in RAM' mode")
 else ()
     set(LINKER_SCRIPT ${CMAKE_SOURCE_DIR}/STM32F405RGTX_FLASH.ld)
 endif ()
 
-# Установка типа устройства
-# 0x81 = 129    - КРЦ
-# 0xdb = 219    - Отладочное устройствл
-#
 
 # Тип устройства по-умолчанию
-set(DEVICE_TYPE 219)
+set(MODULE_TYPE "ktrc")
 
-if(DEFINED ENV{DEVICE_TYPE})
-    # КРЦ
-    if("$ENV{DEVICE_TYPE}" STREQUAL "KRC")
-        set(DEVICE_TYPE 129)
-    endif()
+if(DEFINED ENV{MODULE_TYPE})
+    set(MODULE_TYPE $ENV{MODULE_TYPE})
+else ()
+    message(WARNING "Module type is not set. Default value = \"ktrc\"")
 endif()
 
 add_link_options(-Wl,-gc-sections,--print-memory-usage,-Map=${PROJECT_BINARY_DIR}/${PROJECT_NAME}.map)
@@ -99,14 +84,14 @@ set(HEX_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.hex)
 set(BIN_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.bin)
 
 # Команды:
-#  1. Конфигурация ".elf" файла скриптом "configure_bootloader.py"
+#  1. Конфигурация ".elf" файла скриптом "btl_config.py"
 #  2. Преобразование ".elf" файла в ".hex"
 #  3. Преобразование ".elf" файла в ".bin"
-#     (Параметр "--gap-fill 0xff" отвечает за заполнение пустого пространства байтам "0xff".
-#      Без него не совпадает контрольная сумма, расчитанная скриптом "configure_bootloader.py")
+#     (Параметр "--gap-fill 0x00" отвечает за заполнение пустого пространства байтам "0x00".
+#      Важно: значение "--gap-fill" должно совпадать и при вызове ${CMAKE_OBJCOPY} и при вызове "btl_config.py")
 add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
-        COMMAND python ${PROJECT_SOURCE_DIR}/configure_bootloader.py $<TARGET_FILE:${PROJECT_NAME}.elf> --device_type=${DEVICE_TYPE}
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/utils/btl_config.py --gap-fill 0x00 --module-type=${MODULE_TYPE} $<TARGET_FILE:${PROJECT_NAME}.elf>
         COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${PROJECT_NAME}.elf> ${HEX_FILE}
-        COMMAND ${CMAKE_OBJCOPY} -Obinary --gap-fill 0xff $<TARGET_FILE:${PROJECT_NAME}.elf> ${BIN_FILE}
+        COMMAND ${CMAKE_OBJCOPY} -Obinary --gap-fill 0x00 $<TARGET_FILE:${PROJECT_NAME}.elf> ${BIN_FILE}
         COMMENT "Building ${HEX_FILE}
 Building ${BIN_FILE}")

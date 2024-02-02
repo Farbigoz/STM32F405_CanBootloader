@@ -1,0 +1,3 @@
+[submodule "Core/Inc/abtci_protocol"]
+	path = Core/Inc/abtci_protocol
+	url = git@gitlab.npcprom.ru:abtci/abtci_protocol.git

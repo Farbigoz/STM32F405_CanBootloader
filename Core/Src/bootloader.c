@@ -1,57 +1,73 @@
+#include <memory.h>
 #include "bootloader.h"
 #include "crc.h"
 
 
+
+abtci_protocol_interface get_protocol() {
+	if (HAL_GPIO_ReadPin(CpuRole_GPIO_Port, CpuRole_Pin))
+		return sys_a;
+	else
+		return sys_b;
+}
 
 
 /* ------------------------------------------------------------------------------------------------------------------ */
 /* --------------------------------------------- Работа с флеш памятью ---------------------------------------------- */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-void FlashMemoryUnlock() {
-	if (!FlashUnlocked) {
-		FlashUnlocked = true;
+void flash_unlock() {
+	if (!FLASH_UNLOCKED_FLAG) {
+		FLASH_UNLOCKED_FLAG = true;
 		HAL_FLASH_Unlock();
 	}
 }
 
-void FlashMemoryLock() {
-	if (FlashUnlocked) {
-		FlashUnlocked = false;
+void flash_lock() {
+	if (FLASH_UNLOCKED_FLAG) {
+		FLASH_UNLOCKED_FLAG = false;
 		HAL_FLASH_Lock();
 	}
 }
 
-void FlashMemoryErase() {
-	FlashMemoryUnlock();
+void flash_erase_sector(flash_sector_t sector) {
+	if (sector == FLASH_SECTOR_BLT)
+		return;
+
+	flash_unlock();
 
 	// Очистка памяти с 1 сектора, т.к. в 0 секторе записан бутлоадер
-	// Очистка до 10 сектора (10 включительно), т.к. 11 сектор зарезервирован для перезаписываемых значений
+	// Очистка до 11 сектора (11 включительно)
 
-	for (int i = FLASH_SECTOR_1; i <= FLASH_SECTOR_10; i++) {
-		//__disable_irq();
+	//for (int i = FLASH_SECTOR_1; i <= FLASH_SECTOR_11; i++) {
+	//	//__disable_irq();
 
-		do {
-			FLASH_Erase_Sector(i, VOLTAGE_RANGE_3);
-			for (int k = 0; k < 100000; k++);    // Задержка
-		} while(FLASH_WaitForLastOperation(100) != HAL_OK);
+	//	do {
+	//		FLASH_Erase_Sector(i, VOLTAGE_RANGE_3);
+	//		for (int k = 0; k < 100000; k++);    // Задержка
+	//	} while(FLASH_WaitForLastOperation(100) != HAL_OK);
 
-		//__enable_irq();
-	}
+	//	//__enable_irq();
+	//}
+
+	do {
+		FLASH_Erase_Sector(sector, VOLTAGE_RANGE_3);
+		for (int k = 0; k < 100000; k++);    // Задержка
+	} while(FLASH_WaitForLastOperation(100) != HAL_OK);
 
 	// Сброс бита очистки сектора
 	CLEAR_BIT(FLASH->CR, FLASH_CR_SER);
 }
 
-inline uint8_t FlashMemoryReadByte(uint32_t address) {
-	// Чтение байта из FLASH
-	return *(uint8_t*)(address);
-}
+//inline uint8_t flash_read(uint32_t address) {
+//	// Чтение байта из FLASH
+//	return *(uint8_t*)(address);
+//}
 
-bool FlashMemoryWriteByte(uint32_t address, uint8_t byte) {
+bool flash_write_byte(uint32_t address, uint8_t byte) {
 	HAL_StatusTypeDef status;
 
-	// Даём 10 попыток на запись
+	// 10 попыток на запись
 	for (int writeAttempt = 0; writeAttempt < 10; writeAttempt++) {
 		// Запись байта
 		status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, address, byte);
@@ -66,12 +82,30 @@ bool FlashMemoryWriteByte(uint32_t address, uint8_t byte) {
 	return false;
 }
 
-bool FlashMemoryWriteBytes(uint32_t address, uint8_t *data, uint16_t size) {
-	FlashMemoryUnlock();
+bool flash_write_word(uint32_t address, uint32_t word) {
+	HAL_StatusTypeDef status;
+
+	// 10 попыток на запись
+	for (int writeAttempt = 0; writeAttempt < 10; writeAttempt++) {
+		// Запись байта
+		status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, address, word);
+		// Если запись успешна И запись проверена
+		if (status == HAL_OK)// && ReadByteFlash(address) == byte)
+			// Успех записи
+			return true;
+		// Произошла ошибка записи. Задержка
+		for (int i = 0; i < 10000; i++);
+	}
+	// Ошибка записи
+	return false;
+}
+
+bool flash_write_bytes(uint32_t address, uint8_t *data, uint16_t size) {
+	flash_unlock();
 
 	// Запись данных
 	for (int i = 0; i < size; i++) {
-		while (!FlashMemoryWriteByte(address + i, data[i])) {
+		while (!flash_write_byte(address + i, data[i])) {
 			Error_Handler();
 			return false;
 		}
@@ -87,9 +121,8 @@ bool FlashMemoryWriteBytes(uint32_t address, uint8_t *data, uint16_t size) {
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	// Прерывание от ячейки безопасности
-	if (GPIO_Pin == SafeCell_Interrupt_Pin) {
-		SafeCellHandler();
-	}
+	if (GPIO_Pin == SafeCell_Interrupt_Pin)
+		safe_cell_handle_int();
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
@@ -99,7 +132,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 		RxMessage.ID = RxHeader.ExtId;
 		RxMessage.length = RxHeader.DLC;
 
-		HandleCanMessage(&RxMessage);
+		btl_handle_can(&RxMessage);
 	}
 }
 
@@ -117,15 +150,25 @@ void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 /* ----------------------------------------- Работа с ячейкой безопасности ------------------------------------------ */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-void SafeCellDataPinSet(bool state) {
+void safe_cell_data_set(bool state) {
 	HAL_GPIO_WritePin(SafeCell_Data_GPIO_Port, SafeCell_Data_Pin, (state) ? (GPIO_PIN_SET) : (GPIO_PIN_RESET));
 }
 
-bool SafeCellStatusPin() {
+// true - реле выкл
+// false - реле вкл
+void safe_cell_set_control(bool state) {
+	HAL_GPIO_WritePin(SafeCell_Control_GPIO_Port, SafeCell_Control_Pin, (state) ? (GPIO_PIN_SET) : (GPIO_PIN_RESET));
+}
+
+bool safe_cell_status_state() {
 	return HAL_GPIO_ReadPin(SafeCell_Status_GPIO_Port, SafeCell_Status_Pin) ? (true) : (false);
 }
 
-void SafeCellHandler() {
+bool safe_cell_int_state() {
+	return HAL_GPIO_ReadPin(SafeCell_Interrupt_GPIO_Port, SafeCell_Interrupt_Pin) ? (true) : (false);
+}
+
+void safe_cell_handle_int() {
 	bool txBit, dataPinState;
 	static uint8_t txBitNum = 0;
 
@@ -135,10 +178,10 @@ void SafeCellHandler() {
 	txBitNum++;
 	txBitNum %= 8;
 
-	dataPinState = SafeCellStatusPin() ^ txBit;
+	dataPinState = safe_cell_status_state() ^ txBit;
 
 	//Выдача данных на вывод DATA
-	SafeCellDataPinSet(dataPinState);
+	safe_cell_data_set(dataPinState);
 	//HAL_GPIO_TogglePin(SafeCell_Data_GPIO_Port, SafeCell_Data_Pin);
 
 }
@@ -148,7 +191,7 @@ void SafeCellHandler() {
 /* -------------------------------------------------- Работа с CAN -------------------------------------------------- */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-void CanConfigure() {
+void can_config() {
 	CAN_FilterTypeDef  sFilterConfig;
 
 	// Фильтр сообщений
@@ -186,7 +229,7 @@ void CanConfigure() {
 													|	CAN_IT_ERROR);
 }
 
-void CanSendMessage(TCAN_Message *msg) {
+void can_send(can_message_t *msg) {
 	TxHeader.ExtId = msg->ID;
 	TxHeader.DLC = msg->length;
 
@@ -202,172 +245,216 @@ void CanSendMessage(TCAN_Message *msg) {
 /* -------------------------------------------- Обработка CAN сообщений --------------------------------------------- */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-uint32_t GetCanId(TCommand command) {
-	TCanMessageId msgId;
 
-	msgId.moduleType = DEVICE_TYPE;
-	msgId.moduleId = 0x00;
-	msgId.interface = 0x00;
-	msgId.command = command;
+void btl_send_command(sys_cmd_btl command, const uint8_t *p_data, uint8_t data_len) {
+	can_message_t msg;
+	abtci_protocol_header msg_id;
 
-	return *(uint32_t *)(&msgId);
+	msg_id.type = BTL_CFG.module_type;
+	msg_id.number = 0x00;
+	msg_id.interface = get_protocol();
+	msg_id.command = command;
+
+	msg.ID = *(uint32_t *)(&msg_id);
+	msg.length = data_len;
+
+	if ((data_len > 0) && (p_data != NULL))
+		memcpy(msg.data, p_data, data_len);
+	else
+		msg.length = 0;
+
+	can_send(&msg);
 }
 
-void SendCommand(TCommand command) {
-	TxMessage.ID = GetCanId(command);
-	TxMessage.length = 0;
-
-	CanSendMessage(&TxMessage);
+void btl_send_request(uint32_t number) {
+	sys_cmd_btl_request_data data = {.number = uint32_to_def24(number)};
+	btl_send_command(sys_cmd_btl_request, (uint8_t *)&data, sizeof(sys_cmd_btl_request_data));
 }
 
-void SendRequestFirmwarePacket(uint32_t number) {
-	TCanMessage_FirmwareRequestPacket *data;
+void btl_send_info() {
+	uint32_t size = FW_INFO.size;
+	uint32_t checksum = FW_INFO.checksum;
+	if ((size == 0) || (size >= (FLASH_END_ADDRESS - FLASH_SECTOR_3_ADDRESS_START))) {
+		size = 0;
+		checksum = 0;
+	}
 
-	TxMessage.ID = GetCanId(COMMAND_FIRMWARE_REQUEST_PACKET);
-	TxMessage.length = sizeof(TCanMessage_FirmwareRequestPacket);
-	data = (TCanMessage_FirmwareRequestPacket*)(TxMessage.data);
 
-	data->number = number;
-
-	CanSendMessage(&TxMessage);
+	sys_cmd_btl_inf_data data = {
+			.version=BOOTLOADER_VERSION,
+			.size=uint32_to_def24(size),
+			.checksum=HTONL(checksum)
+	};
+	btl_send_command(sys_cmd_btl_inf, (uint8_t *)(&data), sizeof(sys_cmd_btl_inf_data));
 }
 
-void HandleCanMessage(TCAN_Message *msg) {
-	TCanMessageId *msgId;
+void btl_handle_can(can_message_t *msg) {
+	abtci_protocol_header *msg_id = (abtci_protocol_header *)(&msg->ID);
 
-	msgId = (TCanMessageId *)(&(msg->ID));
+	// Проверка соответствия типа модуля
+	if (msg_id->type != BTL_CFG.module_type) {
+		// ?
+		return;
+	}
 
-	switch (msgId->command) {
-		// Команда подтверждения прошивания
-		case COMMAND_FIRMWARE_START:	HandleCommandFirmwareStart(msg);			break;
+	// Проверка соответствия интерфейса
+	if (msg_id->interface != get_protocol()) {
+		return;
+	}
 
-		// Команда с пакетом прошивки
-		case COMMAND_FIRMWARE_PACKET:	HandleCommandFirmwarePacket(msg);			break;
+	switch (msg_id->command) {
+		// Команда новой прошивки
+		case sys_cmd_btl_erase:
+			btl_handle_erase(msg);
+			break;
 
-		// Команда окончания прошивки
-		case COMMAND_FIRMWARE_FINISH:	HandleCommandFirmwareFinish(msg);			break;
+		// Команда данных прошивки
+		case sys_cmd_btl_flash:
+			btl_handle_flash(msg);
+			break;
+
+		// Команда принудительного запуска прошивки
+		case sys_cmd_btl_force_run:
+			btl_handle_force_run(msg);
+			break;
 
 		default:
 			break;
 	}
 }
 
-void HandleCommandFirmwareStart(TCAN_Message *msg) {
-	TCanMessage_FirmwareStart *firmwareStart;
+void btl_handle_erase(can_message_t *msg) {
+	sys_cmd_btl_inf_erase *data = (sys_cmd_btl_inf_erase *)(msg->data);
 
-	firmwareStart = (TCanMessage_FirmwareStart *)(msg->data);
-
-	FirmwareStart(firmwareStart->size, firmwareStart->checksum);
-
-	SendRequestFirmwarePacket(0);
-}
-
-void HandleCommandFirmwarePacket(TCAN_Message *msg) {
-	TCanMessage_FirmwarePacket *firmwarePacket;
-
-	// Если процесс прошивки не запущен - выходим
-	if (!FirmwareProcess)
-		return;
-
-	firmwarePacket = (TCanMessage_FirmwarePacket *)(msg->data);
-
-	// Номер входящего пакета БОЛЬШЕ номера ожидаемого пакета
-	// (Были пропущены пакеты)
-	if ((LastFlashPacketNumber + 1) < firmwarePacket->number) {
-		// Запрашиваем нужный пакет (под номером, который ожидали, но не получили)
-		SendRequestFirmwarePacket(LastFlashPacketNumber + 1);
-		// Выходим
-		return;
-	}
-
-	// Номер последнего принятого пакета БОЛЬШЕ ИЛИ РАВЕН номера текущего входящего пакета
-	// (Вероятно какой-то модуль в сети пропустил пакет и запросил один из предыдущих пакетов)
-	if (LastFlashPacketNumber >= (int32_t)firmwarePacket->number) {
-		// Выходим, так как уже приняли этот пакет
-		return;
-	}
-
-	// Номер пакета именно тот, который ожидали
-	// Извлекаем данные из пакета и пишем их в память
-	if (!FirmwareAppend(firmwarePacket->data, 4)){
-		// Если данные не удалось записать - выходим
-		return;
-	}
-
-	// Инкрементируем счётчик полученных пакетов
-	LastFlashPacketNumber++;
-}
-
-void HandleCommandFirmwareFinish(TCAN_Message *msg) {
-	TCanMessage_FirmwareFinish *finishFlash;
-
-	finishFlash = (TCanMessage_FirmwareFinish *)(msg->data);
-
-	// Мы не получили столько пакетов, сколько должны были
-	if ((finishFlash->total) < LastFlashPacketNumber) {
-		// Запрашиваем пакет
-		SendRequestFirmwarePacket(LastFlashPacketNumber + 1);
-		return;
-	}
-
-	// Проверка совпадения контрольной суммы
-	if (FirmwareFinish())
-		SendCommand(COMMAND_FIRMWARE_OK);
-	else
-		SendCommand(COMMAND_FIRMWARE_BAD);
-}
-
-/* ------------------------------------------------------------------------------------------------------------------ */
-/* ------------------------------------------------ Процесс прошивки ------------------------------------------------ */
-/* ------------------------------------------------------------------------------------------------------------------ */
-
-void FirmwareStart(uint32_t size, uint32_t checksum) {
 	// Если процесс прошивания уже запущен - выходим
-	if (FirmwareProcess)
+	if (FLASH_PROCESS) {
+		// todo: already flash
 		return;
+	}
+
+	if (msg->length != sizeof(sys_cmd_btl_inf_erase)) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return;
+	}
+
+	if (data->key != ~data->nkey) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return;
+	}
+
+	// Блокировка бутлодера
+	BTL_STUCK = true;
+	// Запуск процесса прошивания
+	FLASH_PROCESS = true;
 
 	// Разблокировка флеш памяти
-	FlashMemoryUnlock();
+	// flash_unlock();
 
-	// Поднимаем флаг процесса прошивания
-	FirmwareProcess = true;
+	// Очистка секторов флеша
+	flash_erase_sector(FLASH_SECTOR_FW_INFO);
+	flash_erase_sector(FLASH_SECTOR_FW_0);
+	flash_erase_sector(FLASH_SECTOR_FW_1);
+	flash_erase_sector(FLASH_SECTOR_FW_2);
+	flash_erase_sector(FLASH_SECTOR_FW_3);
+	flash_erase_sector(FLASH_SECTOR_FW_4);
+	flash_erase_sector(FLASH_SECTOR_FW_5);
+	flash_erase_sector(FLASH_SECTOR_FW_6);
+	flash_erase_sector(FLASH_SECTOR_FW_7);
+	flash_erase_sector(FLASH_SECTOR_FW_8);
+	flash_erase_sector(FLASH_SECTOR_FW_9);
 
-	// Очищаем флеш память
-	FlashMemoryErase();
+	// Запись заголовка прошивки
+	//flash_write_bytes(PROGRAM_SIZE_ADDRESS, (uint8_t *) (&data->size), sizeof(uint32_t));
+	//flash_write_bytes(PROGRAM_CHECKSUM_ADDRESS, (uint8_t *) (&data->checksum), sizeof(uint32_t));
 
-	FlashMemoryWriteBytes(PROGRAM_SIZE_ADDRESS, (uint8_t *)(&size), sizeof(uint32_t));
-	FlashMemoryWriteBytes(PROGRAM_CHECKSUM_ADDRESS, (uint8_t *)(&checksum), sizeof(uint32_t));
+	btl_send_request(0);
 }
 
-bool FirmwareAppend(uint8_t *data, uint16_t size) {
-	bool appendResult;
+void btl_handle_flash(can_message_t *msg) {
+	sys_cmd_btl_flash_data *data = (sys_cmd_btl_flash_data *)(msg->data);
+	uint32_t number = def24_to_uint32(data->number);
 
-	FlashMemoryUnlock();
+	// Если процесс прошивки не запущен - выход
+	if (!FLASH_PROCESS) {
+		// todo: not flash
+		return;
+	}
 
-	HAL_GPIO_WritePin(DebugLed_GPIO_Port, DebugLed_Pin, GPIO_PIN_SET);
+	// Проверка размера данных CAN сообщения
+	if (msg->length < (sizeof(data->checksum) + sizeof(data->number))) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return;
+	}
 
-	// Запись данных
-	appendResult = FlashMemoryWriteBytes(PROGRAM_START_ADDRESS + FirmwareOffset, data, size);
-	FirmwareOffset += size;
+	uint8_t checksum = Crc8(&msg->data[1], msg->length-1);
 
-	HAL_GPIO_WritePin(DebugLed_GPIO_Port, DebugLed_Pin, GPIO_PIN_RESET);
+	// Номер принятого пакета больше ожидаемого (Были пропущены пакеты)
+	if (EXPECTED_FLASH_BLOCK_NUMBER < number) {
+		// Запрос пакета (Под номером, который ожидается)
+		btl_send_request(EXPECTED_FLASH_BLOCK_NUMBER + 1);
+		return;
+	}
 
-	return appendResult;
+	// Номер принятого пакета меньше или равен ожидаемому (Пакет уже был обработан)
+	if (EXPECTED_FLASH_BLOCK_NUMBER > number) {
+		// Блок данных уже был записан, выход
+		return;
+	}
+
+	if (data->checksum != checksum) {
+		// Запрос пакета (Под номером, который ожидается)
+		btl_send_request(EXPECTED_FLASH_BLOCK_NUMBER + 1);
+		return;
+	}
+
+	// Обновление последнего времени приёма блока данных
+	LAST_FLASH_BLOCK_TIME = HAL_GetTick();
+
+	// flash_unlock();
+
+	size_t data_size = msg->length - (sizeof(data->checksum) + sizeof(data->number));
+
+	// Сообщение содержит данные для записи
+	if (data_size != 0)
+	{
+		// Проверка наличия свободного пространства для записи
+		if ((FIRMWARE_BASE_ADDR + FLASH_WRITE_OFFSET + data_size) > FLASH_END_ADDRESS) {
+			btl_send_command(sys_cmd_btl_no_space_available, NULL, 0);
+			return;
+		}
+
+		if (data_size == 4)
+		{
+			// Запись данных по слову (оптимизация)
+			if (flash_write_word(FIRMWARE_BASE_ADDR + FLASH_WRITE_OFFSET, *(uint32_t *)data->data)) {
+				FLASH_WRITE_OFFSET += data_size;
+				EXPECTED_FLASH_BLOCK_NUMBER++;
+			}
+		}
+		else
+		{
+			// Запись данных побайтово
+			if (flash_write_bytes(FIRMWARE_BASE_ADDR + FLASH_WRITE_OFFSET, data->data, data_size)) {
+				FLASH_WRITE_OFFSET += data_size;
+				EXPECTED_FLASH_BLOCK_NUMBER++;
+			}
+		}
+	}
+	// Сообщение не содержит данные для записи - завершение прошивки
+	else
+	{
+		flash_write_bytes((uint32_t)&FW_INFO.size, (uint8_t *) (&FLASH_WRITE_OFFSET), sizeof(uint32_t));
+		uint32_t checksum = btl_fw_checksum();
+		flash_write_bytes((uint32_t)&FW_INFO.checksum, (uint8_t *) (&checksum), sizeof(uint32_t));
+
+		// Завершение процесса прошивки
+		FLASH_PROCESS = false;
+	}
 }
 
-bool FirmwareFinish() {
-	// Блокируем флеш память
-	FlashMemoryLock();
-
-	// Заканчиваем процесс прошивки
-	FirmwareProcess = false;
-
-	// Сверяем контрольную сумму прошивки
-	return *PROGRAM_CHECKSUM_PTR == FirmwareCalcChecksum();
-}
-
-uint32_t FirmwareCalcChecksum() {
-	return Crc32((const uint8_t *) (PROGRAM_START_ADDRESS), *PROGRAM_SIZE_PTR);
+void btl_handle_force_run(can_message_t *msg) {
+	if (!FLASH_PROCESS)
+		BTL_STUCK = false;
 }
 
 
@@ -375,30 +462,52 @@ uint32_t FirmwareCalcChecksum() {
 /* ------------------------------------------------ Запуск программы ------------------------------------------------ */
 /* ------------------------------------------------------------------------------------------------------------------ */
 
-void ExecMainProg()
-{
-	const JumpAppStruct* vector_p = (JumpAppStruct*)PROGRAM_START_ADDRESS;
+uint32_t blt_checksum() {
+	// Весь нулевой сектор за исключением последних 4 байт, где хранится контрольная сумма, посчитанная при компиляции
+	return Crc32(
+			(const uint8_t *) (FLASH_START_ADDRESS),
+			((uint32_t)&BTL_CHECKSUM) - FLASH_START_ADDRESS
+	);
+}
 
-	SetIsrVectorAddress(PROGRAM_START_ADDRESS);
-
-	asm("msr msp, %0; bx %1;" : : "r"(vector_p->stack_addr), "r"(vector_p->func_p));
+bool blt_check_checksum() {
+	return blt_checksum() == BTL_CHECKSUM;
 }
 
 
-void SetIsrVectorAddress(uint32_t address) {
+uint32_t btl_fw_checksum() {
+	if (FW_INFO.size == 0)
+		return 0;
+	if (FW_INFO.size > (FLASH_END_ADDRESS - FLASH_SECTOR_3_ADDRESS_START))
+		return 0;
+
+	return Crc32((const uint8_t *)(FIRMWARE_BASE_ADDR), FW_INFO.size);
+}
+
+bool btl_check_fw_checksum() {
+	if (FW_INFO.size == 0)
+		return false;
+	if (FW_INFO.size > (FLASH_END_ADDRESS - FLASH_SECTOR_3_ADDRESS_START))
+		return false;
+
+	return FW_INFO.checksum == btl_fw_checksum();
+}
+
+
+void blt_set_isr_vector(uint32_t address) {
 	//__disable_irq();
 	SCB->VTOR = address;
 	__DSB();
 	//__enable_irq();
 }
 
+void blt_hw_run()
+{
+	const JumpAppStruct* vector_p = (JumpAppStruct*)FIRMWARE_BASE_ADDR;
 
-uint32_t BootloaderCalcChecksum() {
-	// Весь нулевой сектор за исключением последних 4 байт, где хранится контрольная сумма, посчитанная при компиляции
-	return Crc32(
-			(const uint8_t *) (FLASH_SECTOR_0_ADDRESS_START),
-			((uint32_t)&BOOTLOADER_CHECKSUM) - FLASH_SECTOR_0_ADDRESS_START
-	);
+	blt_set_isr_vector(FIRMWARE_BASE_ADDR);
+
+	asm("msr msp, %0; bx %1;" : : "r"(vector_p->stack_addr), "r"(vector_p->func_p));
 }
 
 /* ------------------------------------------------------------------------------------------------------------------ */
@@ -407,8 +516,8 @@ uint32_t BootloaderCalcChecksum() {
 
 int main(void)
 {
-	LastFlashPacketNumber = -1;
-	FirmwareProcess = false;
+	//EXPECTED_FLASH_BLOCK_NUMBER = 0;
+	//FLASH_PROCESS = false;
 
 	// Инициализация HAL
 	HAL_Init();
@@ -420,7 +529,7 @@ int main(void)
 	// (Автоматически выставляется в "CMakeLists.txt" при наличии параметра среды "EXEC_IN_RAM")
 #ifdef EXEC_IN_RAM
 	// Меняем адрес таблицы векторов (На адрес в оперативной памяти)
-	SetIsrVectorAddress((uint32_t)&_isr_vector_ram_addr);
+	blt_set_isr_vector((uint32_t) &_isr_vector_ram_addr);
 #endif
 
 	// Инициализация и конфигурирование периферии (Сгенерированной в CubeMX)
@@ -428,60 +537,87 @@ int main(void)
 	MX_CAN1_Init();
 
 	// Конфигурирование CAN
-	CanConfigure();
+	can_config();
 
-	// Поднимаем пин Control на ячейке БС, чтобы не включилось реле
-	HAL_GPIO_WritePin(SafeCell_Control_GPIO_Port, SafeCell_Control_Pin, GPIO_PIN_SET);
+	// Отключение реле
+	safe_cell_set_control(true);
 
-	// Проверка совпадения контрольной суммы бутлоадера
-	if (BootloaderCalcChecksum() != BOOTLOADER_CHECKSUM) {
+	// Проверка контрольной суммы бутлоадера
+	if (!blt_check_checksum()) {
 		// Отправка сообщения о несовпадении контрольной суммы бутлоадера
-		SendCommand(COMMAND_BOOTLOADER_BAD_CHECKSUM);
+		btl_send_command(sys_cmd_btl_damaged, NULL, 0);
+		BTL_STUCK = true;
 	}
 
-	// Информирование о состоянии ожидания
-	SendCommand(COMMAND_BOOTLOADER_WAIT);
+	// Проверка контрольной суммы прошивки
+	if (!btl_check_fw_checksum()) {
+		btl_send_command(sys_cmd_btl_fw_damaged, NULL, 0);
+		BTL_STUCK = true;
+	}
 
-	// Ждём 3000 мс
-	HAL_Delay(3000);
+	do {
+		// Информирование о состоянии ожидания
+		btl_send_info();
 
-	// Если во время ожидания были получено подтверждение прошивания - ждём окончания прошивания
-	while (FirmwareProcess);
+		// Ждём 3000 мс
+		HAL_Delay(3000);
+
+		while (FLASH_PROCESS) {
+			// Таймаут ожидания блока данных
+			if ((HAL_GetTick() - LAST_FLASH_BLOCK_TIME) > 100) {
+				LAST_FLASH_BLOCK_TIME = HAL_GetTick();
+				// Запрос нужного блока данных
+				btl_send_request(EXPECTED_FLASH_BLOCK_NUMBER);
+			}
+		}
+
+	} while (BTL_STUCK);
 
 
 	/* ------------------------------------------ Запуск главной программы ------------------------------------------ */
 
+	// Отключение прерываний по приёму CAN сообщений
+	HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
+
 	// Проверка контрольной суммы главной программы
-	if (*PROGRAM_CHECKSUM_PTR != FirmwareCalcChecksum()) {
-		SendCommand(COMMAND_PROGRAM_BAD_CHECKSUM);
-		// Даём время на отправку сообщения
-		HAL_Delay(10);
-		return 1;
-	}
+	//if (!btl_check_fw_checksum() || (FW_INFO.size == 0)) {
+	//	btl_send_command(sys_cmd_btl_fw_damaged, NULL, 0);
+	//	// Задержка для гарантированной отправки сообщения
+	//	HAL_Delay(1000);
+	//	return 1;
+	//}
 
 	// Информирование о запуске основной программы
-	SendCommand(COMMAND_PROGRAM_START);
+	btl_send_command(sys_cmd_blt_fw_run, NULL, 0);
 
-	// Даём время на отправку сообщения
-	HAL_Delay(10);
+	// Задержка для гарантированной отправки сообщения
+	// (Если много модулей на одной шине одновременно отправят сообщения - шина будет загружена и отправка может быть задержана)
+	HAL_Delay(1000);
 
-	// Ждём заднего фронта пина прерывания ячейки БС
+	// Ожидание заднего фронта прерывания ячейки БС
 	uint32_t tickstart;
 	bool intPrev, intNow;
-	intNow = HAL_GPIO_ReadPin(SafeCell_Interrupt_GPIO_Port, SafeCell_Interrupt_Pin);
+	intNow = safe_cell_int_state();
 	tickstart = HAL_GetTick();
 
 	do {
 		intPrev = intNow;
-		intNow = HAL_GPIO_ReadPin(SafeCell_Interrupt_GPIO_Port, SafeCell_Interrupt_Pin);
+		intNow = safe_cell_int_state();
 
-		HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);
+		//HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);
 
-		// Если ждём фронт больше 1000мс (БС не подключена?) => выходим из цикла
-		if ((HAL_GetTick() - tickstart) > 1000)
+		// Таймаут ожидания 500мс
+		if ((HAL_GetTick() - tickstart) > 500) {
+			// Ячейка БС не подключена или неисправна
+			btl_send_command(sys_cmd_btl_safe_cell_fault, NULL, 0);
+			HAL_Delay(1000);
 			break;
+		}
 
-	} while (!(intPrev == false && intNow == true));
+	} while (!intPrev || intNow);
+
+	// Блокировка флеш памяти
+	flash_lock();
 
 	// Отключение CAN-а
 	HAL_CAN_Stop(&hcan1);
@@ -508,14 +644,14 @@ int main(void)
 	// Деинициализация HAL
 	HAL_DeInit();
 
+	// Деинициализация параметров делителей/умножителей частот, источников тактироваия
+	HAL_RCC_DeInit();
+
 	// Сброс системного счётчика
 	SysTick->CTRL = 0;
 	SysTick->LOAD = 0;
 	SysTick->VAL = 0;
 
-	// Деинициализация параметров делителей/умножителей частот, источников тактироваия
-	HAL_RCC_DeInit();
-
 	// Переход к главной программе
-	ExecMainProg();
+	blt_hw_run();
 }

@@ -1,4 +1,2 @@
-cmake-build-debug
-cmake-build-debug-ram
-cmake-build-release-krc
-.idea
+cmake-build-*
+__pycache__
