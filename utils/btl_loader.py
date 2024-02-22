@@ -159,11 +159,15 @@ class btl_loader:
             time.sleep(0.001)
 
     def _flasher(self):
+        prev_block_number = self.block_number
         while 1:
             #input("...\n")
 
             while (self.block_number < 0) or (self.block_number > self.total_blocks):
                 pass
+
+            if prev_block_number >= self.block_number:
+                time.sleep(0.1)
 
             with self.flash_lock:
                 out_msg_id = abtci_can_id(self.interface.value,
@@ -180,6 +184,7 @@ class btl_loader:
                       f"{self.block_number*4:>7d} / {self.total_blocks*4:<7d} "
                       f"({round(100*self.block_number/self.total_blocks, 1)}%)")
 
+                prev_block_number = self.block_number
                 self.block_number += 1
 
                 #if len(fw_block) < 4:
