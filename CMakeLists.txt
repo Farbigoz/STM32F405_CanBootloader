@@ -83,6 +83,13 @@ add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
 set(HEX_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.hex)
 set(BIN_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.bin)
 
+
+if (CMAKE_HOST_WIN32)
+    set(_python "python")
+else()
+    set(_python "python3")
+endif ()
+
 # Команды:
 #  1. Конфигурация ".elf" файла скриптом "btl_config.py"
 #  2. Преобразование ".elf" файла в ".hex"
@@ -90,7 +97,7 @@ set(BIN_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.bin)
 #     (Параметр "--gap-fill 0x00" отвечает за заполнение пустого пространства байтам "0x00".
 #      Важно: значение "--gap-fill" должно совпадать и при вызове ${CMAKE_OBJCOPY} и при вызове "btl_config.py")
 add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
-        COMMAND python3 ${PROJECT_SOURCE_DIR}/utils/btl_config.py --gap-fill 0x00 --module-type=${MODULE_TYPE} $<TARGET_FILE:${PROJECT_NAME}.elf>
+        COMMAND ${_python} ${PROJECT_SOURCE_DIR}/utils/btl_config.py --gap-fill 0x00 --module-type=${MODULE_TYPE} $<TARGET_FILE:${PROJECT_NAME}.elf>
         COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${PROJECT_NAME}.elf> ${HEX_FILE}
         COMMAND ${CMAKE_OBJCOPY} -Obinary --gap-fill 0x00 $<TARGET_FILE:${PROJECT_NAME}.elf> ${BIN_FILE}
         COMMENT "Building ${HEX_FILE}

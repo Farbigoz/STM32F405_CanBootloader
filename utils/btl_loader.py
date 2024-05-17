@@ -2,6 +2,7 @@ import os
 import io
 import sys
 import time
+import hashlib
 import argparse
 import threading
 
@@ -52,14 +53,14 @@ def print_can_msg(msg_id: abtci_can_id, data: bytes):
 
 
 class btl_loader:
-    def __init__(self, fw_raw: bytes, module_type: abtci_type, can: can_channel, force: bool):
+    def __init__(self, fw_raw: bytes, checksum: int, module_type: abtci_type, can: can_channel, force: bool):
         self.can = can
 
         self.module_type = module_type
 
         self.force = force
 
-        self.fw_checksum = GetCrc32(fw_raw)
+        self.fw_checksum = checksum
         self.fw_stream = io.BytesIO(fw_raw)
 
         self.block_number = -1
@@ -261,7 +262,10 @@ if __name__ == "__main__":
     else:
         raise Exception("Unsupported firmware format.")
 
-    fw_raw = fw_raw
+    #hash = hashlib.sha1(fw_raw)
+    #hashsum = hash.digest()
+    #print(hash.hexdigest())
+    #checksum = GetCrc32(hashsum)
 
     checksum = GetCrc32(fw_raw)
 
@@ -276,7 +280,7 @@ if __name__ == "__main__":
         if can is None:
             continue
 
-        loader = btl_loader(fw_raw, module_type, can_socket(can), args.force)
+        loader = btl_loader(fw_raw, checksum, module_type, can_socket(can), args.force)
         loaders.append(loader)
 
     for loader in loaders:

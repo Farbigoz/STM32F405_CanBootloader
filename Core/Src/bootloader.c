@@ -1,6 +1,7 @@
 #include <memory.h>
 #include "bootloader.h"
 #include "crc.h"
+#include "sha1.h"
 
 
 
@@ -476,11 +477,38 @@ bool blt_check_checksum() {
 
 
 uint32_t btl_fw_checksum() {
+	// SHA1Context sha_context;
+
 	if (FW_INFO.size == 0)
 		return 0;
 	if (FW_INFO.size > (FLASH_END_ADDRESS - FLASH_SECTOR_3_ADDRESS_START))
 		return 0;
 
+	/*
+	SHA1Reset(&sha_context);
+
+	uint32_t size = FW_INFO.size;
+	uint32_t chunk_size;
+	const uint8_t *p_mem = (const uint8_t *)(FIRMWARE_BASE_ADDR);
+	do {
+		chunk_size = (size >= 64) ? 64 : size;
+		SHA1Input(&sha_context, p_mem, chunk_size);
+		p_mem += chunk_size;
+		size -= chunk_size;
+	} while (size);
+
+	SHA1Result(&sha_context);
+
+	uint8_t byte;
+	uint32_t crc_context = Crc32Init();
+	for (int i = 0; i < 5; i++) {
+		for (int b = 0; b < 4; b++) {
+			byte = ((uint8_t *)&sha_context.Message_Digest[i])[3-b];
+			Crc32Update(&crc_context, &byte, 1);
+		}
+	}
+	return Crc32Final(crc_context);
+	*/
 	return Crc32((const uint8_t *)(FIRMWARE_BASE_ADDR), FW_INFO.size);
 }
 
