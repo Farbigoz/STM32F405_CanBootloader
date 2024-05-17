@@ -250,9 +250,16 @@ if __name__ == "__main__":
 
     module_type = MODULE_TYPES.get(args.module_type)
 
-    binary: lief.ELF.Binary = lief.parse(args.fw)
-    fw_raw: bytes = get_flash_content(binary)
-    fw_raw = fw_raw[FLASH_OFFSET:]
+    fw_raw: bytes
+    if args.fw.endswith(".elf"):
+        binary: lief.ELF.Binary = lief.parse(args.fw)
+        fw_raw = get_flash_content(binary)
+        fw_raw = fw_raw[FLASH_OFFSET:]
+    elif args.fw.endswith(".bin"):
+        with open(args.fw, "rb") as f:
+            fw_raw = f.read()
+    else:
+        raise Exception("Unsupported firmware format.")
 
     fw_raw = fw_raw
 
