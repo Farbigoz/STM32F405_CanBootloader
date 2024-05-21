@@ -5,6 +5,10 @@
 
 
 
+static int SAFE_CELL_INT_CNT = 0;
+
+
+
 abtci_protocol_interface get_protocol() {
 	if (HAL_GPIO_ReadPin(CpuRole_GPIO_Port, CpuRole_Pin))
 		return sys_a;
@@ -172,6 +176,8 @@ bool safe_cell_int_state() {
 void safe_cell_handle_int() {
 	bool txBit, dataPinState;
 	static uint8_t txBitNum = 0;
+
+	SAFE_CELL_INT_CNT++;
 
 	txBit = SAFE_CELL_DATA & (0x01 << txBitNum);				//Выделение передаваемого бита
 
@@ -657,13 +663,13 @@ int main(void)
 
 	// Ожидание заднего фронта прерывания ячейки БС
 	uint32_t tickstart;
-	bool intPrev, intNow;
-	intNow = safe_cell_int_state();
+	//bool intPrev, intNow;
+	//intNow = safe_cell_int_state();
 	tickstart = HAL_GetTick();
 
 	do {
-		intPrev = intNow;
-		intNow = safe_cell_int_state();
+		//intPrev = intNow;
+		//intNow = safe_cell_int_state();
 
 		//HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);
 
@@ -675,7 +681,7 @@ int main(void)
 			break;
 		}
 
-	} while (!intPrev || intNow);
+	} while (SAFE_CELL_INT_CNT % 10);
 
 	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 3
 
