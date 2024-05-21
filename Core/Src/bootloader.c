@@ -610,6 +610,8 @@ int main(void)
 		BTL_STUCK = true;
 	}
 
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 0
+
 	do {
 		// Информирование о состоянии ожидания
 		btl_send_info();
@@ -645,9 +647,13 @@ int main(void)
 	// Информирование о запуске основной программы
 	btl_send_command(sys_cmd_blt_fw_run, NULL, 0);
 
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);		// 1
+
 	// Задержка для гарантированной отправки сообщения
 	// (Если много модулей на одной шине одновременно отправят сообщения - шина будет загружена и отправка может быть задержана)
 	HAL_Delay(1000);
+
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);		// 2
 
 	// Ожидание заднего фронта прерывания ячейки БС
 	uint32_t tickstart;
@@ -671,15 +677,27 @@ int main(void)
 
 	} while (!intPrev || intNow);
 
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 3
+
+	for (int i = 0; i < 0x5555; i++);
+
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 4
+
 	// Блокировка флеш памяти
 	flash_lock();
 
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 5
+
 	// Отключение CAN-а
-	HAL_CAN_Stop(&hcan1);
+	//HAL_CAN_Stop(&hcan1);
 	HAL_CAN_DeInit(&hcan1);
+
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 6
 
 	// Отключение прерывания ячейки БС
 	HAL_NVIC_DisableIRQ(SafeCell_Interrupt_EXTI_IRQn);
+
+	HAL_GPIO_TogglePin(DebugLed_GPIO_Port, DebugLed_Pin);	// 7
 
 	// Деинициализация всех пинов
 	HAL_GPIO_DeInit(SafeCell_Interrupt_GPIO_Port, SafeCell_Interrupt_Pin);
