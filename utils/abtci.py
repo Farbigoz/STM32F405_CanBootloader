@@ -4,7 +4,8 @@ import struct
 
 from typing import Union
 
-from crc import GetCrc8
+from crc import GetCrc8, GetCrc16
+
 
 class abtci_can_id:
     interface: int
@@ -76,16 +77,18 @@ class abtci_btl_cmd(enum.IntEnum):
 # Команды информирования
     btl_inf                 = 10    #< Информация бутлодера
     btl_damaged             = 11    #< Бутлодер неисправен
+    btl_wrong_msg           = 12    #< Неправильное сообщение (Неверная длина данных)
+    btl_no_space_available  = 13    #< Нет свободного места
     btl_fw_damaged          = 17    #< Прошивка повреждена (Ошибка контрольной суммы)
     blt_fw_run              = 18    #< Запуск прошивки
     btl_safe_cell_fault     = 19    #< Повреждение ячейки безопасности (Отсутствуют прерывания)
-    btl_wrong_msg           = 12    #< Неправильное сообщение (Неверная длина данных)
-    btl_no_space_available  = 13    #< Нет свободного места
-# Кравления
+# Команды управления
     btl_erase               = 20    #< Удаление прошивки
     btl_flash               = 21    #< Блок прошивки
     btl_request             = 22    #< Запрос блока прошивки
     btl_force_run           = 23    #< Принудительный запуск прошивки
+    btl_halt                = 24    #< Остановка в бутлоадере
+
 
 
 class abtci_btl_cmd_inf:
@@ -120,6 +123,14 @@ class abtci_btl_cmd_erase:
     def to_data(self) -> bytes:
         random_num = random.randint(0x00000000, 0xffffffff)
         return struct.pack("!LL", random_num, (~random_num) & 0xffffffff)
+
+
+class abtci_btl_cmd_ctrl_data:
+    def to_data(self, btl_ver: int) -> bytes:
+        random_num = random.randint(0x0000, 0xffff)
+        data = struct.pack("!BBHH", btl_ver, 0, random_num, (~random_num) & 0xffff)
+        data += struct.pack("!H", GetCrc16(data))
+        return data
 
 
 class abtci_btl_cmd_flash:

@@ -13,6 +13,9 @@ class can_msg:
     def text(self) -> str:
         data = " ".join(list(map(lambda x: f"{x:02x}", self.data))) + " "*23
         return f"{self.id:08x} [{len(self.data)}] {data:23}"
+
+    def __repr__(self) -> str:
+        return self.text()
     
 
 
@@ -25,6 +28,9 @@ class can_channel:
 
     def state(self) -> bool:
         return False
+
+    def recv_available(self) -> bool:
+        pass
 
     def send_msg(self, msg: can_msg):
         pass
@@ -82,9 +88,17 @@ class can_socket(can_channel):
             if not self._run:
                 break
 
-            cf, addr = s.recvfrom(16)
+            try:
+                cf, addr = s.recvfrom(16)
+            except OSError:
+                self._run = False
+                break
+
             can_id, can_dlc, data = self._dissect_can_frame(cf)
             self.rx_messages.append(can_msg(can_id & 0x1FFFFFFF, data))
+
+    def recv_available(self) -> bool:
+        return len(self.rx_messages) != 0
 
     def send_msg(self, msg: can_msg):
         try:

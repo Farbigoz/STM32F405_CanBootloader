@@ -289,6 +289,40 @@ void btl_send_info() {
 	btl_send_command(sys_cmd_btl_inf, (uint8_t *)(&data), sizeof(sys_cmd_btl_inf_data));
 }
 
+bool btl_check_ctrl_cmd(can_message_t *msg) {
+	sys_cmd_btl_ctrl_data *data = (sys_cmd_btl_ctrl_data *)(msg->data);
+
+	if (FLASH_PROCESS) {
+		// todo: already flash
+		return false;
+	}
+
+	// Проверка длины пакета
+	if (msg->length != sizeof(sys_cmd_btl_ctrl_data)) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return false;
+	}
+
+	// Проверка версии бутлоадера
+	if (data->version != BOOTLOADER_VERSION) {
+		return false;
+	}
+
+	// Проверка подтверждающего ключа
+	if (NTOHS(data->key) != (uint16_t)~NTOHS(data->nkey)) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return false;
+	}
+
+	// Проверка контрольной суммы пакера
+	if (NTOHS(data->crc16) != Crc16(msg->data, 6)) {
+		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
+		return false;
+	}
+
+	return true;
+}
+
 void btl_handle_can(can_message_t *msg) {
 	abtci_protocol_header *msg_id = (abtci_protocol_header *)(&msg->ID);
 
@@ -304,19 +338,24 @@ void btl_handle_can(can_message_t *msg) {
 	}
 
 	switch (msg_id->command) {
-		// Команда новой прошивки
-		case sys_cmd_btl_erase:
-			btl_handle_erase(msg);
-			break;
-
 		// Команда данных прошивки
 		case sys_cmd_btl_flash:
 			btl_handle_flash(msg);
 			break;
 
+		// Команда новой прошивки
+		case sys_cmd_btl_erase:
+			if (btl_check_ctrl_cmd(msg)) btl_handle_erase();
+			break;
+
 		// Команда принудительного запуска прошивки
 		case sys_cmd_btl_force_run:
-			btl_handle_force_run(msg);
+			if (btl_check_ctrl_cmd(msg)) btl_handle_force_run();
+			break;
+
+		// Команда принудительной остановки в бутлоадере
+		case sys_cmd_btl_halt:
+			if (btl_check_ctrl_cmd(msg)) BTL_STUCK = true;
 			break;
 
 		default:
@@ -325,21 +364,9 @@ void btl_handle_can(can_message_t *msg) {
 }
 
 void btl_handle_erase(can_message_t *msg) {
-	sys_cmd_btl_inf_erase *data = (sys_cmd_btl_inf_erase *)(msg->data);
-
 	// Если процесс прошивания уже запущен - выходим
 	if (FLASH_PROCESS) {
 		// todo: already flash
-		return;
-	}
-
-	if (msg->length != sizeof(sys_cmd_btl_inf_erase)) {
-		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
-		return;
-	}
-
-	if (data->key != ~data->nkey) {
-		btl_send_command(sys_cmd_btl_wrong_msg, NULL, 0);
 		return;
 	}
 
@@ -453,7 +480,7 @@ void btl_handle_flash(can_message_t *msg) {
 	}
 }
 
-void btl_handle_force_run(can_message_t *msg) {
+void btl_handle_force_run() {
 	if (!FLASH_PROCESS)
 		BTL_STUCK = false;
 }

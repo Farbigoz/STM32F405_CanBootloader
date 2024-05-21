@@ -255,11 +255,11 @@ void btl_send_request(uint32_t number);
 void btl_handle_can(can_message_t *msg);
 
 
-void btl_handle_erase(can_message_t *msg);
-
 void btl_handle_flash(can_message_t *msg);
 
-void btl_handle_force_run(can_message_t *msg);
+void btl_handle_erase();
+
+void btl_handle_force_run();
 
 /* ------------------------------------------------------------------------------------------------------------------ */
 /* ------------------------------------------------ Процесс прошивки ------------------------------------------------ */

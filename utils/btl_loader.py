@@ -19,6 +19,8 @@ if sys.platform.startswith("win"):
     import candle_driver
 
 
+# /mnt/d/repos/GKS_KTRC/cmake-build-release-ktrc-btl-gks/KTRC_GKS_normal.elf
+
 
 # Отступ от начала флеш памяти, где расположен бутлодер
 FLASH_OFFSET = 0x8000
